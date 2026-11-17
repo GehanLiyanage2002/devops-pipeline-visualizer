@@ -1,0 +1,36 @@
+---
+- name: Configure App Servers and Deploy Containers
+  hosts: app_servers
+  become: true
+  roles:
+    - common
+    - role: docker
+  tasks:
+    - name: Install base system packages
+      apt:
+        name:
+          - curl
+          - ca-certificates
+          - gnupg
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker daemon is running
+      systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Run PipeScope API container
+      docker_container:
+        name: pipescope-api
+        image: ghcr.io/pipescope/api:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "8080:8080"
+
+    - name: Apply Kubernetes namespace manifest
+      k8s:
+        state: present
+        src: /opt/k8s/deployment.yaml

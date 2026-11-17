@@ -1,0 +1,95 @@
+# =============================================================================
+# PipeScope — Unified Git Ignore Configuration
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Go / Backend Build Artifacts & Runtime Data
+# -----------------------------------------------------------------------------
+backend/bin/
+backend/tmp/
+backend/data/overrides.json
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.txt
+coverage.html
+go.work
+go.work.sum
+
+# -----------------------------------------------------------------------------
+# Frontend / Node.js / Vite Build Artifacts
+# -----------------------------------------------------------------------------
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+dist-ssr/
+*.tsbuildinfo
+frontend/*.tsbuildinfo
+.vite/
+frontend/.vite/
+.eslintcache
+
+# -----------------------------------------------------------------------------
+# Logs & Package Manager Caches
+# -----------------------------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# -----------------------------------------------------------------------------
+# Environment & Secrets
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+
+# -----------------------------------------------------------------------------
+# DevOps / Terraform Local State (Keep sample fixtures intact)
+# -----------------------------------------------------------------------------
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# -----------------------------------------------------------------------------
+# IDEs, Editors & AI Assistants
+# -----------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.agents/
+.antigravity/
+
+# -----------------------------------------------------------------------------
+# OS Generated Files
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
