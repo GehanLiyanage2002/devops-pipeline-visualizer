@@ -231,31 +231,64 @@ func (s *Server) HandleScanGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var files []correlator.FileInput
+	var candidatePaths []string
 	for _, entry := range treeData.Tree {
-		if entry.Type != "blob" || !isCandidateDevOpsFile(entry.Path) {
-			continue
+		if entry.Type == "blob" && isCandidateDevOpsFile(entry.Path) {
+			candidatePaths = append(candidatePaths, entry.Path)
 		}
-		rawURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, branch, entry.Path)
-		rawReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, rawURL, nil)
-		if err != nil {
-			continue
+	}
+
+	// Fetch candidate configuration files concurrently with a bounded worker pool (up to 8 workers)
+	type fetchedResult struct {
+		index int
+		input correlator.FileInput
+		ok    bool
+	}
+	results := make([]fetchedResult, len(candidatePaths))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+
+	for idx, entryPath := range candidatePaths {
+		wg.Add(1)
+		go func(i int, p string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			rawURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, branch, p)
+			rawReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, rawURL, nil)
+			if err != nil {
+				return
+			}
+			if strings.TrimSpace(req.GitHubToken) != "" {
+				rawReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(req.GitHubToken))
+			}
+			fileResp, err := s.httpClient.Do(rawReq)
+			if err != nil {
+				return
+			}
+			defer fileResp.Body.Close()
+
+			if fileResp.StatusCode == http.StatusOK {
+				contentBytes, _ := io.ReadAll(fileResp.Body)
+				results[i] = fetchedResult{
+					index: i,
+					input: correlator.FileInput{
+						Path:    p,
+						Content: string(contentBytes),
+					},
+					ok: true,
+				}
+			}
+		}(idx, entryPath)
+	}
+	wg.Wait()
+
+	files := make([]correlator.FileInput, 0, len(candidatePaths))
+	for _, res := range results {
+		if res.ok {
+			files = append(files, res.input)
 		}
-		if strings.TrimSpace(req.GitHubToken) != "" {
-			rawReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(req.GitHubToken))
-		}
-		fileResp, err := s.httpClient.Do(rawReq)
-		if err != nil {
-			continue
-		}
-		if fileResp.StatusCode == http.StatusOK {
-			contentBytes, _ := io.ReadAll(fileResp.Body)
-			files = append(files, correlator.FileInput{
-				Path:    entry.Path,
-				Content: string(contentBytes),
-			})
-		}
-		_ = fileResp.Body.Close()
 	}
 
 	g, err := correlator.ParseAndStitchFiles(files)
@@ -411,7 +444,17 @@ func (s *Server) HandleManualOverride(w http.ResponseWriter, r *http.Request) {
 
 // HandleSimulateRun handles POST /api/pipeline/simulate-run.
 // Runs a realistic 6-stage CI/CD deployment simulation across the active graph over 12 seconds.
+// Supports optional failure injection via ?fail_node_id=<id> or JSON {"fail_node_id": "<id>"}.
 func (s *Server) HandleSimulateRun(w http.ResponseWriter, r *http.Request) {
+	failNodeID := strings.TrimSpace(r.URL.Query().Get("fail_node_id"))
+	if failNodeID == "" && r.Body != nil {
+		var bodyPayload struct {
+			FailNodeID string `json:"fail_node_id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&bodyPayload)
+		failNodeID = strings.TrimSpace(bodyPayload.FailNodeID)
+	}
+
 	s.mu.Lock()
 	if s.activeGraph == nil {
 		if sampleGraph, err := correlator.ScanAndStitchDirectory(s.sampleDir); err == nil {
@@ -438,15 +481,16 @@ func (s *Server) HandleSimulateRun(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	go s.runPipelineSimulation(stepDuration)
+	go s.runPipelineSimulation(stepDuration, failNodeID)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"status":           "simulation_started",
 		"duration_seconds": int((stepDuration * 6).Seconds()),
+		"fail_node_id":     failNodeID,
 	})
 }
 
-func (s *Server) runPipelineSimulation(stepDuration time.Duration) {
+func (s *Server) runPipelineSimulation(stepDuration time.Duration, failNodeID string) {
 	defer func() {
 		s.mu.Lock()
 		s.simRunning = false
@@ -494,16 +538,21 @@ func (s *Server) runPipelineSimulation(stepDuration time.Duration) {
 	s.mu.Unlock()
 
 	completedTools := make(map[graph.Tool]bool)
+	var failedAtPhase string
 
 	for _, phase := range phases {
 		s.mu.Lock()
 		runningNodeIDs := make(map[string]bool)
+		phaseHasFailTarget := false
 		for i := range s.activeGraph.Nodes {
 			n := &s.activeGraph.Nodes[i]
 			switch {
 			case phase.Tools[n.Tool]:
 				n.Status = graph.StatusRunning
 				runningNodeIDs[n.ID] = true
+				if failNodeID != "" && n.ID == failNodeID {
+					phaseHasFailTarget = true
+				}
 			case completedTools[n.Tool]:
 				n.Status = graph.StatusSuccess
 			default:
@@ -535,6 +584,36 @@ func (s *Server) runPipelineSimulation(stepDuration time.Duration) {
 		})
 
 		time.Sleep(stepDuration)
+
+		if phaseHasFailTarget {
+			s.mu.Lock()
+			for i := range s.activeGraph.Nodes {
+				n := &s.activeGraph.Nodes[i]
+				if n.ID == failNodeID {
+					n.Status = graph.StatusFailed
+				} else if phase.Tools[n.Tool] {
+					n.Status = graph.StatusSuccess
+				}
+			}
+			for i := range s.activeGraph.Edges {
+				s.activeGraph.Edges[i].Animated = false
+			}
+			failSnapshot := cloneGraph(s.activeGraph)
+			failStatuses := collectNodeStatuses(failSnapshot)
+			s.mu.Unlock()
+
+			failedAtPhase = phase.Name
+			s.hub.Broadcast(TelemetryEvent{
+				Type:          "simulation_completed",
+				Timestamp:     time.Now().UTC().Format(time.RFC3339),
+				Stage:         "failed",
+				Message:       fmt.Sprintf("Pipeline halted: failure injected at node %q (%s)", failNodeID, failedAtPhase),
+				NodeStatuses:  failStatuses,
+				AnimatedEdges: []string{},
+				Graph:         failSnapshot,
+			})
+			return
+		}
 
 		for tool := range phase.Tools {
 			completedTools[tool] = true

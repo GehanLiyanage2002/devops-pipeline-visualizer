@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import {
   AlertTriangle,
@@ -8,17 +8,26 @@ import {
   Cloud,
   Container,
   Cpu,
+  FileCode2,
   GitBranch,
   GitMerge,
   Loader2,
   ServerCog,
   Sparkles,
+  Tag,
   Workflow,
   XCircle,
 } from 'lucide-react';
 import { usePipelineStore } from '../../store/usePipelineStore';
-import type { DevOpsNodeData } from '../../utils/layout';
-import type { NodeStatus, Tool } from '../../types/graph';
+import {
+  computeBlastRadius,
+  type DevOpsNodeData,
+} from '../../utils/layout';
+import {
+  extractNodeDisplayTags,
+  extractNodeSubtitle,
+} from '../../utils/gifExporter';
+import type { NodeStatus, Stage, Tool } from '../../types/graph';
 
 interface ToolTheme {
   label: string;
@@ -104,6 +113,17 @@ const TOOL_THEMES: Record<Tool, ToolTheme> = {
   },
 };
 
+const STAGE_SHORT_LABELS: Record<Stage, string> = {
+  source: 'SOURCE',
+  ci: 'CI BUILD',
+  config_mgmt: 'CONFIG MGMT',
+  artifact: 'ARTIFACT',
+  iac: 'TERRAFORM IAC',
+  gitops: 'GITOPS SYNC',
+  runtime: 'K8S RUNTIME',
+  cloud: 'CLOUD INFRA',
+};
+
 function renderStatusBadge(status: NodeStatus) {
   switch (status) {
     case 'running':
@@ -143,13 +163,41 @@ function renderStatusBadge(status: NodeStatus) {
   }
 }
 
+function getTagChipColorClass(tag: string): string {
+  const lower = tag.toLowerCase();
+  if (lower.startsWith('tag:') || lower.startsWith('img:') || lower.startsWith('repo:') || lower.startsWith('base:')) {
+    return 'bg-sky-950/80 text-sky-300 border-sky-500/35';
+  }
+  if (lower.startsWith('ns:') || lower.startsWith('replicas:') || lower.startsWith('port:') || lower.startsWith('host:')) {
+    return 'bg-indigo-950/80 text-indigo-300 border-indigo-500/35';
+  }
+  if (lower.startsWith('cidr:') || lower.startsWith('region:') || lower.startsWith('size:') || lower.startsWith('cloud:')) {
+    return 'bg-amber-950/80 text-amber-300 border-amber-500/35';
+  }
+  if (lower.startsWith('branch:') || lower.startsWith('on:') || lower.startsWith('rev:') || lower.startsWith('path:')) {
+    return 'bg-emerald-950/80 text-emerald-300 border-emerald-500/35';
+  }
+  if (lower.includes('=')) {
+    return 'bg-purple-950/80 text-purple-300 border-purple-500/35';
+  }
+  return 'bg-slate-950/90 text-cyan-300/90 border-slate-700/80';
+}
+
 function getStatusGlowClass(
   status: NodeStatus,
   selected?: boolean,
-  isSearchMatch?: boolean
+  isSearchMatch?: boolean,
+  isUpstream?: boolean,
+  isDownstream?: boolean
 ): string {
   if (selected || isSearchMatch) {
     return 'ring-2 ring-cyan-400 border-cyan-400/90 shadow-glow-cyan';
+  }
+  if (isDownstream) {
+    return 'ring-1 ring-amber-400/80 border-amber-400/80';
+  }
+  if (isUpstream) {
+    return 'ring-1 ring-sky-400/80 border-sky-400/80';
   }
   switch (status) {
     case 'running':
@@ -168,9 +216,31 @@ function getStatusGlowClass(
 const DevOpsNodeComponent: React.FC<NodeProps> = ({ data, selected }) => {
   const { node } = data as unknown as DevOpsNodeData;
   const searchQuery = usePipelineStore((s) => s.searchQuery);
+  const activeToolFilter = usePipelineStore((s) => s.activeToolFilter);
+  const showNodeTags = usePipelineStore((s) => s.showNodeTags);
+  const highlightBlastRadius = usePipelineStore((s) => s.highlightBlastRadius);
+  const selectedNodeId = usePipelineStore((s) => s.selectedNodeId);
+  const rfEdges = usePipelineStore((s) => s.rfEdges);
+
   const theme = TOOL_THEMES[node.tool] ?? TOOL_THEMES.github;
   const Icon = theme.Icon;
-  const meta = node.metadata ?? {};
+
+  const subtitle = useMemo(() => extractNodeSubtitle(node), [node]);
+  const tags = useMemo(() => extractNodeDisplayTags(node), [node]);
+
+  const { isUpstream, isDownstream, isUnrelatedToSelection } = useMemo(() => {
+    if (!highlightBlastRadius || !selectedNodeId || selectedNodeId === node.id) {
+      return { isUpstream: false, isDownstream: false, isUnrelatedToSelection: false };
+    }
+    const { upstreamNodes, downstreamNodes } = computeBlastRadius(selectedNodeId, rfEdges);
+    const up = upstreamNodes.has(node.id);
+    const down = downstreamNodes.has(node.id);
+    return {
+      isUpstream: up,
+      isDownstream: down,
+      isUnrelatedToSelection: !up && !down,
+    };
+  }, [highlightBlastRadius, selectedNodeId, node.id, rfEdges]);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const isSearchMatch =
@@ -179,49 +249,29 @@ const DevOpsNodeComponent: React.FC<NodeProps> = ({ data, selected }) => {
       node.id.toLowerCase().includes(normalizedQuery) ||
       node.tool.toLowerCase().includes(normalizedQuery) ||
       node.stage.toLowerCase().includes(normalizedQuery) ||
-      String(meta.container_image ?? '')
-        .toLowerCase()
-        .includes(normalizedQuery) ||
-      String(meta.file_path ?? '')
-        .toLowerCase()
-        .includes(normalizedQuery));
+      subtitle.toLowerCase().includes(normalizedQuery) ||
+      tags.some((t) => t.toLowerCase().includes(normalizedQuery)));
 
-  const isDimmed = normalizedQuery.length > 0 && !isSearchMatch;
+  const isToolFilteredOut =
+    activeToolFilter !== 'all' && node.tool !== activeToolFilter;
 
-  const pills: string[] = [];
-  if (typeof meta.container_image === 'string' && meta.container_image) {
-    pills.push(meta.container_image);
-  } else if (typeof meta.image_repo === 'string' && meta.image_repo) {
-    pills.push(meta.image_repo);
-  }
-  if (Array.isArray(meta.branches) && meta.branches.length > 0) {
-    pills.push(`branch: ${String(meta.branches[0])}`);
-  }
-  if (typeof meta.runs_on === 'string' && meta.runs_on) {
-    pills.push(meta.runs_on);
-  }
-  if (typeof meta.target_hosts === 'string' && meta.target_hosts) {
-    pills.push(`hosts: ${meta.target_hosts}`);
-  }
-  if (typeof meta.resource_type === 'string' && meta.resource_type) {
-    pills.push(meta.resource_type);
-  }
-  if (typeof meta.sync_path === 'string' && meta.sync_path) {
-    pills.push(`path: ${meta.sync_path}`);
-  }
-  if (typeof meta.kind === 'string' && meta.kind) {
-    pills.push(`k8s: ${meta.kind}`);
-  }
-  if (pills.length === 0 && typeof meta.file_path === 'string' && meta.file_path) {
-    pills.push(meta.file_path);
-  }
+  const isDimmed =
+    (normalizedQuery.length > 0 && !isSearchMatch) ||
+    isToolFilteredOut ||
+    isUnrelatedToSelection;
 
   return (
     <div
-      className={`w-[272px] rounded-xl bg-slate-900/95 backdrop-blur-md border border-l-4 ${
+      className={`w-[288px] rounded-xl bg-slate-900/95 backdrop-blur-md border border-l-4 ${
         theme.accentBorder
-      } ${getStatusGlowClass(node.status, selected, isSearchMatch)} ${
-        isDimmed ? 'opacity-30 scale-[0.98]' : 'opacity-100'
+      } ${getStatusGlowClass(
+        node.status,
+        selected,
+        isSearchMatch,
+        isUpstream,
+        isDownstream
+      )} ${
+        isDimmed ? 'opacity-25 scale-[0.98]' : 'opacity-100'
       } px-3.5 py-2.5 transition-all duration-200 select-none`}
     >
       <Handle
@@ -230,8 +280,8 @@ const DevOpsNodeComponent: React.FC<NodeProps> = ({ data, selected }) => {
         className="!w-2.5 !h-2.5 !bg-slate-300 !border-2 !border-slate-900"
       />
 
-      {/* Top Row: Tool Badge + Live Status Badge */}
-      <div className="flex items-center justify-between gap-1.5 mb-2">
+      {/* Row 1: Tool Badge + Stage Badge + Live Status Badge */}
+      <div className="flex items-center justify-between gap-1.5 mb-1.5">
         <div className="flex items-center gap-1.5 min-w-0">
           <div className={`p-1.5 rounded-lg ${theme.iconBg} shrink-0`}>
             <Icon className="w-3.5 h-3.5" />
@@ -241,8 +291,11 @@ const DevOpsNodeComponent: React.FC<NodeProps> = ({ data, selected }) => {
           >
             {theme.label}
           </span>
+          <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-950/90 text-slate-400 border border-slate-800 shrink-0">
+            {STAGE_SHORT_LABELS[node.stage] ?? node.stage}
+          </span>
           {node.is_manual && (
-            <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300 border border-pink-500/40">
+            <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300 border border-pink-500/40 shrink-0">
               <Sparkles className="w-2.5 h-2.5" />
               MANUAL
             </span>
@@ -251,29 +304,60 @@ const DevOpsNodeComponent: React.FC<NodeProps> = ({ data, selected }) => {
         {renderStatusBadge(node.status)}
       </div>
 
-      {/* Node Title */}
-      <div
-        className="text-xs font-semibold text-slate-100 truncate mb-2"
-        title={node.label}
-      >
-        {node.label}
+      {/* Row 2: Primary Clear Node Name / Label + Upstream/Downstream Role Pill */}
+      <div className="flex items-center justify-between gap-1.5 mb-1">
+        <div
+          className="text-[12.5px] font-bold text-slate-50 truncate"
+          title={node.label}
+        >
+          {node.label}
+        </div>
+        {isUpstream && (
+          <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/40 shrink-0">
+            UPSTREAM
+          </span>
+        )}
+        {isDownstream && (
+          <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40 shrink-0">
+            IMPACT
+          </span>
+        )}
       </div>
 
-      {/* Metadata Quick Pills */}
-      <div className="flex flex-wrap items-center gap-1">
-        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-950/90 text-slate-400 border border-slate-800 uppercase">
-          {node.stage}
-        </span>
-        {pills.slice(0, 2).map((pill, idx) => (
-          <span
-            key={idx}
-            className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-950/80 text-cyan-300/90 border border-slate-800 max-w-[180px] truncate"
-            title={pill}
-          >
-            {pill}
-          </span>
-        ))}
+      {/* Row 3: Technical Identifier & File Path Subtitle */}
+      <div
+        className="flex items-center gap-1 text-[10px] font-mono text-slate-400 truncate mb-2"
+        title={subtitle}
+      >
+        <FileCode2 className="w-3 h-3 text-slate-500 shrink-0" />
+        <span className="truncate">{subtitle}</span>
       </div>
+
+      {/* Row 4: Categorized Semantic Tag Chips */}
+      {showNodeTags && tags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 pt-1 border-t border-slate-800/80">
+          {tags.slice(0, 3).map((tag, idx) => (
+            <span
+              key={idx}
+              className={`inline-flex items-center gap-1 text-[9.5px] font-mono px-1.5 py-0.5 rounded border max-w-[175px] truncate ${getTagChipColorClass(
+                tag
+              )}`}
+              title={tag}
+            >
+              <Tag className="w-2.5 h-2.5 opacity-75 shrink-0" />
+              <span className="truncate">{tag}</span>
+            </span>
+          ))}
+          {tags.length > 3 && (
+            <span
+              className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700"
+              title={tags.slice(3).join(', ')}
+            >
+              +{tags.length - 3}
+            </span>
+          )}
+        </div>
+      )}
 
       <Handle
         type="source"

@@ -66,13 +66,34 @@ func (p *ArgoCDParser) Parse(filePath string, content []byte) (*graph.PipelineGr
 		}
 
 		nodeID := "argocd-app-" + slugify(appName)
+		syncPath := strings.TrimSpace(app.Spec.Source.Path)
+		targetRev := strings.TrimSpace(app.Spec.Source.TargetRevision)
+		destNS := strings.TrimSpace(app.Spec.Destination.Namespace)
+		project := strings.TrimSpace(app.Spec.Project)
+
+		var argoTags []string
+		if syncPath != "" {
+			argoTags = appendUnique(argoTags, "path:"+syncPath)
+		}
+		if targetRev != "" {
+			argoTags = appendUnique(argoTags, "rev:"+targetRev)
+		}
+		if destNS != "" {
+			argoTags = appendUnique(argoTags, "ns:"+destNS)
+		}
+		if project != "" {
+			argoTags = appendUnique(argoTags, "proj:"+project)
+		}
+
 		meta := map[string]interface{}{
 			"file_path":             filePath,
+			"project":               project,
 			"repo_url":              strings.TrimSpace(app.Spec.Source.RepoURL),
-			"sync_path":             strings.TrimSpace(app.Spec.Source.Path),
-			"target_revision":       strings.TrimSpace(app.Spec.Source.TargetRevision),
+			"sync_path":             syncPath,
+			"target_revision":       targetRev,
 			"destination_server":    strings.TrimSpace(app.Spec.Destination.Server),
-			"destination_namespace": strings.TrimSpace(app.Spec.Destination.Namespace),
+			"destination_namespace": destNS,
+			"tags":                  argoTags,
 		}
 
 		if err := g.AddNode(graph.Node{

@@ -77,16 +77,33 @@ func (p *AnsibleParser) Parse(filePath string, content []byte) (*graph.PipelineG
 
 		taskModules, taskNames, imageRepo, containerImage := extractAnsibleTasks(allTasks)
 
+		var ansTags []string
+		if targetHosts != "" {
+			ansTags = appendUnique(ansTags, "hosts:"+targetHosts)
+		}
+		if len(roles) > 0 {
+			ansTags = appendUnique(ansTags, "roles:"+strings.Join(roles, ","))
+		}
+		if len(allTasks) > 0 {
+			ansTags = appendUnique(ansTags, fmt.Sprintf("tasks:%d", len(allTasks)))
+		}
+		if containerImage != "" {
+			ansTags = appendUnique(ansTags, "tag:"+extractImageTag(containerImage))
+		}
+
 		meta := map[string]interface{}{
 			"file_path":    filePath,
 			"target_hosts": targetHosts,
 			"roles":        roles,
 			"tasks":        taskModules,
 			"task_names":   taskNames,
+			"task_count":   len(allTasks),
+			"tags":         ansTags,
 		}
 		if imageRepo != "" {
 			meta["image_repo"] = imageRepo
 			meta["container_image"] = containerImage
+			meta["image_tag"] = extractImageTag(containerImage)
 		}
 
 		if err := g.AddNode(graph.Node{

@@ -64,11 +64,23 @@ func (p *DockerfileParser) Parse(filePath string, content []byte) (*graph.Pipeli
 		}
 	}
 
+	var dockerTags []string
+	if len(baseImages) > 0 {
+		dockerTags = appendUnique(dockerTags, "base:"+baseImages[len(baseImages)-1])
+	}
+	if len(buildStages) > 0 {
+		dockerTags = appendUnique(dockerTags, "stages:"+strings.Join(buildStages, ","))
+	}
+	for _, port := range exposedPorts {
+		dockerTags = appendUnique(dockerTags, "port:"+port)
+	}
+
 	meta := map[string]interface{}{
 		"file_path":     filePath,
 		"base_images":   baseImages,
 		"build_stages":  buildStages,
 		"exposed_ports": exposedPorts,
+		"tags":          dockerTags,
 	}
 
 	label := "Docker Image"

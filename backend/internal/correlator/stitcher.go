@@ -261,6 +261,15 @@ func linkGitHubActionsAndDocker(g *graph.PipelineGraph) {
 			if stringMeta(dockerNode.Metadata, "container_image") == "" && containerImg != "" {
 				dockerNode.Metadata["container_image"] = containerImg
 			}
+			if imgTag := stringMeta(jobNode.Metadata, "image_tag"); imgTag != "" {
+				dockerNode.Metadata["image_tag"] = imgTag
+				if existingTags, ok := dockerNode.Metadata["tags"].([]string); ok {
+					dockerNode.Metadata["tags"] = append(existingTags, "tag:"+imgTag)
+				}
+			}
+			if containerImg != "" && strings.HasPrefix(dockerNode.Label, "Docker Image") && !strings.Contains(dockerNode.Label, ":") {
+				dockerNode.Label = fmt.Sprintf("Docker Image: %s", containerImg)
+			}
 			dockerNode.Metadata["correlation_reason"] = fmt.Sprintf(
 				"Linked to GitHub Actions job %q building image repo %q",
 				jobNode.ID, imgRepo,

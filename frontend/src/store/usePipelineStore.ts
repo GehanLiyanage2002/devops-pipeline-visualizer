@@ -20,6 +20,7 @@ import type {
   PipelineGraph,
   Position,
   TelemetryEvent,
+  Tool,
   ZoomLevel,
 } from '../types/graph';
 
@@ -41,6 +42,10 @@ interface PipelineStoreState {
   layoutVersion: number;
   selectedNodeId: string | null;
   searchQuery: string;
+  activeToolFilter: Tool | 'all';
+  showEdgeLabels: boolean;
+  showNodeTags: boolean;
+  highlightBlastRadius: boolean;
   pendingEdgeLabel: string;
   isLoading: boolean;
   isSimulating: boolean;
@@ -52,6 +57,10 @@ interface PipelineStoreState {
   setZoomLevel: (level: ZoomLevel) => Promise<void>;
   setSelectedNodeId: (id: string | null) => void;
   setSearchQuery: (query: string) => void;
+  setActiveToolFilter: (tool: Tool | 'all') => void;
+  setShowEdgeLabels: (show: boolean) => void;
+  setShowNodeTags: (show: boolean) => void;
+  setHighlightBlastRadius: (highlight: boolean) => void;
   setPendingEdgeLabel: (label: string) => void;
   onNodesChange: (changes: NodeChange[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
@@ -65,7 +74,7 @@ interface PipelineStoreState {
   loadSamplePipeline: () => Promise<void>;
   scanGitHubRepo: (repoUrl: string, branch: string, token?: string) => Promise<void>;
   parseUploadedFiles: (files: UploadedFilePayload[]) => Promise<void>;
-  triggerSimulation: () => Promise<void>;
+  triggerSimulation: (failNodeId?: string) => Promise<void>;
   connectWebSocket: () => () => void;
 }
 
@@ -77,6 +86,10 @@ export const usePipelineStore = create<PipelineStoreState>((set, get) => ({
   layoutVersion: 0,
   selectedNodeId: null,
   searchQuery: '',
+  activeToolFilter: 'all',
+  showEdgeLabels: true,
+  showNodeTags: true,
+  highlightBlastRadius: true,
   pendingEdgeLabel: 'manual link',
   isLoading: false,
   isSimulating: false,
@@ -115,6 +128,31 @@ export const usePipelineStore = create<PipelineStoreState>((set, get) => ({
 
   setSearchQuery: (query: string) => {
     set({ searchQuery: query });
+  },
+
+  setActiveToolFilter: (tool: Tool | 'all') => {
+    set({ activeToolFilter: tool });
+  },
+
+  setShowEdgeLabels: (show: boolean) => {
+    const updatedEdges = get().rfEdges.map((rfe) => {
+      const edgeObj = (rfe.data as { edge?: PipelineEdge } | undefined)?.edge;
+      const defaultLabel =
+        edgeObj?.label || edgeObj?.relation_type.replace(/_/g, ' ') || '';
+      return {
+        ...rfe,
+        label: show ? defaultLabel : undefined,
+      };
+    });
+    set({ showEdgeLabels: show, rfEdges: updatedEdges });
+  },
+
+  setShowNodeTags: (show: boolean) => {
+    set({ showNodeTags: show });
+  },
+
+  setHighlightBlastRadius: (highlight: boolean) => {
+    set({ highlightBlastRadius: highlight });
   },
 
   setPendingEdgeLabel: (label: string) => {
@@ -376,13 +414,22 @@ export const usePipelineStore = create<PipelineStoreState>((set, get) => ({
     }
   },
 
-  triggerSimulation: async () => {
+  triggerSimulation: async (failNodeId?: string) => {
     set({
       isSimulating: true,
-      telemetryMessage: 'Starting pipeline deployment simulation...',
+      telemetryMessage: failNodeId
+        ? `Starting chaos simulation (injecting failure on ${failNodeId})...`
+        : 'Starting pipeline deployment simulation...',
     });
     try {
-      await fetch(`${API_BASE}/api/pipeline/simulate-run`, { method: 'POST' });
+      const query = failNodeId
+        ? `?fail_node_id=${encodeURIComponent(failNodeId)}`
+        : '';
+      await fetch(`${API_BASE}/api/pipeline/simulate-run${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(failNodeId ? { fail_node_id: failNodeId } : {}),
+      });
     } catch (err) {
       set({
         isSimulating: false,

@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import {
   Download,
+  FileCode,
   FileUp,
+  Film,
   FolderGit2,
   Image as ImageIcon,
   LayoutTemplate,
+  Loader2,
   Play,
   RefreshCw,
+  RotateCcw,
   Upload,
   Workflow,
   X,
@@ -15,15 +19,23 @@ import {
   usePipelineStore,
   type UploadedFilePayload,
 } from '../store/usePipelineStore';
+import {
+  exportPipelineGIF,
+  exportPipelinePNG,
+  exportPipelineSVG,
+} from '../utils/gifExporter';
 
 export const HeaderBar: React.FC = () => {
   const {
     graph,
+    rfNodes,
+    rfEdges,
     isLoading,
     isSimulating,
     loadSamplePipeline,
     triggerSimulation,
     autoLayout,
+    resetManualOverrides,
     scanGitHubRepo,
     parseUploadedFiles,
     error,
@@ -31,6 +43,7 @@ export const HeaderBar: React.FC = () => {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'github' | 'upload'>('github');
+  const [isExportingGif, setIsExportingGif] = useState(false);
 
   // GitHub Repo Scan State
   const [repoUrl, setRepoUrl] = useState('https://github.com/pipescope/sample-pipeline');
@@ -63,62 +76,28 @@ export const HeaderBar: React.FC = () => {
   };
 
   const handleExportPNG = () => {
-    const svgEl = document.querySelector('.react-flow__edges') as SVGSVGElement | null;
-    if (!svgEl && !graph) return;
-
-    // Generate a clean high-resolution summary card + DAG snapshot PNG using HTML5 Canvas
-    const canvas = document.createElement('canvas');
-    canvas.width = 1600;
-    canvas.height = 900;
-    const ctx = canvas.getContext('2d');
-    if (!ctx || !graph) return;
-
-    ctx.fillStyle = '#020617';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.fillStyle = '#22d3ee';
-    ctx.font = 'bold 24px Inter, sans-serif';
-    ctx.fillText(`PipeScope — ${graph.name}`, 40, 48);
-
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '14px monospace';
-    ctx.fillText(
-      `Nodes: ${graph.nodes.length} | Edges: ${graph.edges.length} | Groups: ${graph.groups.length} | Updated: ${graph.updated_at}`,
-      40,
-      76
-    );
-
-    graph.nodes.forEach((n, idx) => {
-      const x = n.position.x > 0 ? n.position.x * 0.75 + 60 : 60 + (idx % 5) * 290;
-      const y = n.position.y > 0 ? n.position.y * 0.75 + 120 : 130 + Math.floor(idx / 5) * 140;
-
-      ctx.fillStyle = '#0f172a';
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(x, y, 240, 82, 12);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = '#38bdf8';
-      ctx.font = 'bold 11px monospace';
-      ctx.fillText(`${n.tool.toUpperCase()} • ${n.stage.toUpperCase()}`, x + 14, y + 26);
-
-      ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 13px Inter, sans-serif';
-      ctx.fillText(n.label.slice(0, 28), x + 14, y + 50);
-
-      ctx.fillStyle = '#64748b';
-      ctx.font = '11px monospace';
-      ctx.fillText(n.id.slice(0, 30), x + 14, y + 68);
-    });
-
-    const dataUrl = canvas.toDataURL('image/png');
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = `${graph.id || 'pipescope-architecture'}.png`;
-    a.click();
+    if (!graph) return;
+    exportPipelinePNG(graph, rfNodes, rfEdges);
   };
+
+  const handleExportSVG = () => {
+    if (!graph) return;
+    exportPipelineSVG(graph, rfNodes, rfEdges);
+  };
+
+  const handleExportGIF = async () => {
+    if (!graph || isExportingGif) return;
+    setIsExportingGif(true);
+    try {
+      await exportPipelineGIF(graph, rfNodes, rfEdges);
+    } finally {
+      setIsExportingGif(false);
+    }
+  };
+
+  const hasManualEdits = Boolean(
+    graph?.nodes.some((n) => n.is_manual) || graph?.edges.some((e) => e.is_manual)
+  );
 
   const handleFileInputChange = async (
     e: React.ChangeEvent<HTMLInputElement>
@@ -213,6 +192,20 @@ export const HeaderBar: React.FC = () => {
             <span>Auto-Layout</span>
           </button>
 
+          {hasManualEdits && (
+            <button
+              type="button"
+              onClick={() => void resetManualOverrides()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-rose-950/60 hover:bg-rose-900/70 text-rose-300 border border-rose-500/40 transition-colors"
+              title="Reset all custom nodes and manual edges"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Edits</span>
+            </button>
+          )}
+
+          <div className="h-5 w-px bg-slate-800 mx-0.5" />
+
           <button
             type="button"
             onClick={handleExportJSON}
@@ -225,12 +218,37 @@ export const HeaderBar: React.FC = () => {
 
           <button
             type="button"
+            onClick={handleExportSVG}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+            title="Export Vector Architecture SVG"
+          >
+            <FileCode className="w-3.5 h-3.5" />
+            <span>SVG</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleExportPNG}
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-            title="Export Architecture PNG"
+            title="Export High-Resolution Architecture PNG"
           >
             <ImageIcon className="w-3.5 h-3.5" />
             <span>PNG</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void handleExportGIF()}
+            disabled={isExportingGif || !graph}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-400/50 transition-colors"
+            title="Export Animated 6-Stage Pipeline Execution Flow as GIF"
+          >
+            {isExportingGif ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-300" />
+            ) : (
+              <Film className="w-3.5 h-3.5 text-purple-300" />
+            )}
+            <span>{isExportingGif ? 'Encoding GIF...' : 'Export GIF'}</span>
           </button>
 
           <button

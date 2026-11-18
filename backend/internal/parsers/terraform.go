@@ -163,9 +163,43 @@ func (p *TerraformParser) parseHCL(filePath string, content []byte) (*graph.Pipe
 			meta["target_hosts"] = hostTag
 		}
 
+		// Extract all resource tags (tags.*) and key infrastructure attributes
+		resourceTags := make(map[string]string)
+		var tagList []string
+		for k, v := range res.Attributes {
+			if strings.HasPrefix(k, "tags.") && strings.TrimSpace(v) != "" {
+				tagKey := strings.TrimPrefix(k, "tags.")
+				resourceTags[tagKey] = v
+				tagList = appendUnique(tagList, fmt.Sprintf("%s=%s", tagKey, v))
+			}
+		}
+		if len(resourceTags) > 0 {
+			meta["resource_tags"] = resourceTags
+		}
+		if cidr := res.Attributes["cidr_block"]; cidr != "" {
+			meta["cidr_block"] = cidr
+			tagList = appendUnique(tagList, "cidr:"+cidr)
+		}
+		if instType := res.Attributes["instance_type"]; instType != "" {
+			meta["instance_type"] = instType
+			tagList = appendUnique(tagList, "size:"+instType)
+		}
+		if mut := res.Attributes["image_tag_mutability"]; mut != "" {
+			meta["image_tag_mutability"] = mut
+			tagList = appendUnique(tagList, "tags:"+strings.ToLower(mut))
+		}
+		if reg, ok := meta["region"].(string); ok && reg != "" {
+			tagList = appendUnique(tagList, "region:"+reg)
+		}
+		if len(tagList) > 0 {
+			meta["tags"] = tagList
+		}
+
 		label := fmt.Sprintf("%s.%s", res.ResourceType, res.ResourceName)
 		if nameAttr := res.Attributes["name"]; nameAttr != "" {
 			label = fmt.Sprintf("%s (%s)", label, nameAttr)
+		} else if tagName := res.Attributes["tags.Name"]; tagName != "" && tagName != res.ResourceName {
+			label = fmt.Sprintf("%s (%s)", label, tagName)
 		}
 
 		if err := g.AddNode(graph.Node{

@@ -53,6 +53,20 @@ func splitImageRepoAndTag(raw string) (repo string, full string) {
 	return repo, full
 }
 
+// extractImageTag returns the tag portion of a container image reference (e.g. "latest" from "ghcr.io/org/api:latest").
+func extractImageTag(full string) string {
+	cleaned := strings.TrimSpace(full)
+	if cleaned == "" {
+		return ""
+	}
+	lastSlash := strings.LastIndex(cleaned, "/")
+	lastColon := strings.LastIndex(cleaned, ":")
+	if lastColon > lastSlash && lastColon+1 < len(cleaned) {
+		return cleaned[lastColon+1:]
+	}
+	return "latest"
+}
+
 func appendUnique(slice []string, items ...string) []string {
 	seen := make(map[string]struct{}, len(slice))
 	for _, existing := range slice {

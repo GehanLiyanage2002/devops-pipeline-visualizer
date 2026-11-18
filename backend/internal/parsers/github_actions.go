@@ -69,8 +69,18 @@ func (p *GitHubActionsParser) Parse(filePath string, content []byte) (*graph.Pip
 		"workflow_name": wfName,
 		"triggers":      triggers,
 	}
+	var sourceTags []string
+	for _, tr := range triggers {
+		sourceTags = appendUnique(sourceTags, "on:"+tr)
+	}
 	if len(branches) > 0 {
 		sourceMeta["branches"] = branches
+		for _, br := range branches {
+			sourceTags = appendUnique(sourceTags, "branch:"+br)
+		}
+	}
+	if len(sourceTags) > 0 {
+		sourceMeta["tags"] = sourceTags
 	}
 
 	if err := g.AddNode(graph.Node{
@@ -107,12 +117,40 @@ func (p *GitHubActionsParser) Parse(filePath string, content []byte) (*graph.Pip
 			needs := extractStringList(&job.Needs)
 
 			jobMeta := map[string]interface{}{
-				"file_path": filePath,
-				"job_id":    jobID,
-				"runs_on":   runsOn,
+				"file_path":     filePath,
+				"workflow_name": wfName,
+				"job_id":        jobID,
+				"runs_on":       runsOn,
+				"steps_count":   len(job.Steps),
 			}
 
 			scanGHASteps(job.Steps, jobMeta)
+
+			var jobTags []string
+			if runsOn != "" {
+				jobTags = appendUnique(jobTags, "runner:"+runsOn)
+			}
+			if len(job.Steps) > 0 {
+				jobTags = appendUnique(jobTags, fmt.Sprintf("steps:%d", len(job.Steps)))
+			}
+			if imgTag, ok := jobMeta["image_tag"].(string); ok && imgTag != "" {
+				jobTags = appendUnique(jobTags, "tag:"+imgTag)
+			}
+			if cp, ok := jobMeta["cloud_provider"].(string); ok && cp != "" {
+				jobTags = appendUnique(jobTags, "cloud:"+cp)
+			}
+			if reg, ok := jobMeta["aws_region"].(string); ok && reg != "" {
+				jobTags = appendUnique(jobTags, "region:"+reg)
+			}
+			if jobMeta["executes_terraform"] == true {
+				jobTags = appendUnique(jobTags, "iac:terraform")
+			}
+			if jobMeta["executes_ansible"] == true {
+				jobTags = appendUnique(jobTags, "cfg:ansible")
+			}
+			if len(jobTags) > 0 {
+				jobMeta["tags"] = jobTags
+			}
 
 			if err := g.AddNode(graph.Node{
 				ID:        nodeID,
@@ -213,8 +251,12 @@ func extractScalarOrListString(n *yaml.Node) string {
 
 func scanGHASteps(steps []ghaStep, meta map[string]interface{}) {
 	var cloudProviders []string
+	var stepNames []string
 
 	for _, step := range steps {
+		if sName := strings.TrimSpace(step.Name); sName != "" {
+			stepNames = appendUnique(stepNames, sName)
+		}
 		usesLower := strings.ToLower(strings.TrimSpace(step.Uses))
 		runCmd := strings.TrimSpace(step.Run)
 		runLower := strings.ToLower(runCmd)
@@ -228,17 +270,20 @@ func scanGHASteps(steps []ghaStep, meta map[string]interface{}) {
 			if repo, full := splitImageRepoAndTag(rawTag); repo != "" {
 				meta["image_repo"] = repo
 				meta["container_image"] = full
+				meta["image_tag"] = extractImageTag(full)
 			}
 		}
 		if matches := dockerBuildTagRegex.FindStringSubmatch(runCmd); len(matches) > 1 {
 			if repo, full := splitImageRepoAndTag(matches[1]); repo != "" {
 				meta["image_repo"] = repo
 				meta["container_image"] = full
+				meta["image_tag"] = extractImageTag(full)
 			}
 		} else if matches := dockerPushImageRegex.FindStringSubmatch(runCmd); len(matches) > 1 {
 			if repo, full := splitImageRepoAndTag(matches[1]); repo != "" {
 				meta["image_repo"] = repo
 				meta["container_image"] = full
+				meta["image_tag"] = extractImageTag(full)
 			}
 		}
 
@@ -277,5 +322,8 @@ func scanGHASteps(steps []ghaStep, meta map[string]interface{}) {
 
 	if len(cloudProviders) > 0 {
 		meta["cloud_providers"] = cloudProviders
+	}
+	if len(stepNames) > 0 {
+		meta["step_names"] = stepNames
 	}
 }

@@ -18,8 +18,8 @@ import type {
 
 const elk = new ELK();
 
-const NODE_WIDTH = 272;
-const NODE_HEIGHT = 120;
+const NODE_WIDTH = 288;
+const NODE_HEIGHT = 138;
 
 export interface DevOpsNodeData extends Record<string, unknown> {
   node: PipelineNode;
@@ -59,6 +59,63 @@ export function rollUpStatus(statuses: NodeStatus[]): NodeStatus {
   if (statuses.includes('out_of_sync')) return 'out_of_sync';
   if (statuses.includes('success')) return 'success';
   return 'idle';
+}
+
+/**
+ * Computes the transitive upstream (ancestors) and downstream (descendants / blast radius)
+ * node IDs and edge IDs for a given selectedNodeId.
+ */
+export function computeBlastRadius(
+  selectedNodeId: string | null,
+  edges: { id: string; source: string; target: string }[]
+): {
+  upstreamNodes: Set<string>;
+  downstreamNodes: Set<string>;
+  connectedEdges: Set<string>;
+} {
+  const upstreamNodes = new Set<string>();
+  const downstreamNodes = new Set<string>();
+  const connectedEdges = new Set<string>();
+
+  if (!selectedNodeId) {
+    return { upstreamNodes, downstreamNodes, connectedEdges };
+  }
+
+  // BFS downstream (blast radius)
+  const downQueue = [selectedNodeId];
+  const seenDown = new Set<string>([selectedNodeId]);
+  while (downQueue.length > 0) {
+    const curr = downQueue.shift()!;
+    for (const e of edges) {
+      if (e.source === curr) {
+        connectedEdges.add(e.id);
+        if (!seenDown.has(e.target)) {
+          seenDown.add(e.target);
+          downstreamNodes.add(e.target);
+          downQueue.push(e.target);
+        }
+      }
+    }
+  }
+
+  // BFS upstream (trigger chain)
+  const upQueue = [selectedNodeId];
+  const seenUp = new Set<string>([selectedNodeId]);
+  while (upQueue.length > 0) {
+    const curr = upQueue.shift()!;
+    for (const e of edges) {
+      if (e.target === curr) {
+        connectedEdges.add(e.id);
+        if (!seenUp.has(e.source)) {
+          seenUp.add(e.source);
+          upstreamNodes.add(e.source);
+          upQueue.push(e.source);
+        }
+      }
+    }
+  }
+
+  return { upstreamNodes, downstreamNodes, connectedEdges };
 }
 
 /**

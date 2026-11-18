@@ -163,6 +163,7 @@ func (p *KubernetesParser) Parse(filePath string, content []byte) (*graph.Pipeli
 
 			var images []string
 			var primaryRepo, primaryImage string
+			var containerPorts []string
 			for _, c := range m.Spec.Template.Spec.Containers {
 				repo, full := splitImageRepoAndTag(c.Image)
 				if full != "" {
@@ -174,15 +175,35 @@ func (p *KubernetesParser) Parse(filePath string, content []byte) (*graph.Pipeli
 				}
 			}
 
+			var wlTags []string
+			wlTags = appendUnique(wlTags, "ns:"+ns)
+			if m.Spec.Replicas != nil {
+				wlTags = appendUnique(wlTags, fmt.Sprintf("replicas:%d", *m.Spec.Replicas))
+			}
+			if primaryImage != "" {
+				wlTags = appendUnique(wlTags, "tag:"+extractImageTag(primaryImage))
+			}
+			for k, v := range labels {
+				wlTags = appendUnique(wlTags, fmt.Sprintf("%s=%s", k, v))
+			}
+			for _, cp := range containerPorts {
+				wlTags = appendUnique(wlTags, "port:"+cp)
+			}
+
 			meta := map[string]interface{}{
 				"file_path": filePath,
 				"kind":      kind,
 				"namespace": ns,
 				"labels":    labels,
+				"tags":      wlTags,
+			}
+			if m.Spec.Replicas != nil {
+				meta["replicas"] = *m.Spec.Replicas
 			}
 			if primaryImage != "" {
 				meta["container_image"] = primaryImage
 				meta["image_repo"] = primaryRepo
+				meta["image_tag"] = extractImageTag(primaryImage)
 				meta["images"] = images
 			}
 
@@ -216,11 +237,29 @@ func (p *KubernetesParser) Parse(filePath string, content []byte) (*graph.Pipeli
 				selector = make(map[string]string)
 			}
 
+			var svcTags []string
+			svcTags = appendUnique(svcTags, "ns:"+ns)
+			for _, p := range m.Spec.Ports {
+				proto := strings.ToUpper(strings.TrimSpace(p.Protocol))
+				if proto == "" {
+					proto = "TCP"
+				}
+				if p.TargetPort != nil {
+					svcTags = appendUnique(svcTags, fmt.Sprintf("port:%d->%v/%s", p.Port, p.TargetPort, proto))
+				} else if p.Port > 0 {
+					svcTags = appendUnique(svcTags, fmt.Sprintf("port:%d/%s", p.Port, proto))
+				}
+			}
+			for k, v := range selector {
+				svcTags = appendUnique(svcTags, fmt.Sprintf("sel:%s=%s", k, v))
+			}
+
 			meta := map[string]interface{}{
 				"file_path": filePath,
 				"kind":      "Service",
 				"namespace": ns,
 				"selector":  selector,
+				"tags":      svcTags,
 			}
 
 			if err := g.AddNode(graph.Node{
@@ -263,12 +302,22 @@ func (p *KubernetesParser) Parse(filePath string, content []byte) (*graph.Pipeli
 				}
 			}
 
+			var ingTags []string
+			ingTags = appendUnique(ingTags, "ns:"+ns)
+			for _, h := range hosts {
+				ingTags = appendUnique(ingTags, "host:"+h)
+			}
+			for _, b := range backends {
+				ingTags = appendUnique(ingTags, "svc:"+b)
+			}
+
 			meta := map[string]interface{}{
 				"file_path":        filePath,
 				"kind":             "Ingress",
 				"namespace":        ns,
 				"backend_services": backends,
 				"hosts":            hosts,
+				"tags":             ingTags,
 			}
 
 			if err := g.AddNode(graph.Node{

@@ -27,8 +27,9 @@ Modern cloud-native delivery pipelines are fragmented across multiple declarativ
 1. **Static Multi-Tool Parsing**: Directly analyzes `.github/workflows/*.yml`, `Dockerfile`, `ansible/playbook.yml`, `terraform/*.tf`, `argocd/application.yaml`, and `k8s/*.yaml`.
 2. **Heuristic Cross-Tool Stitching**: Infers implicit dependencies (such as matching Docker image repositories between CI jobs, ECR/ACR registries, and Kubernetes `Deployment` specs, or nesting Kubernetes workloads inside Terraform-provisioned AWS EKS / Azure AKS clusters).
 3. **3-Tier Semantic Zooming**: Seamlessly switch between an **Executive Stage Flow (Level 1)**, **Jobs & Services View (Level 2)**, and **Full Granular Infrastructure Topology (Level 3)** powered by hierarchical **ELK.js** layout computation.
-4. **Hybrid Architecture Workbench**: Drag-and-drop custom nodes from the Architecture Toolbox, draw persisted `manual_link` edges between handles, edit node metadata in the Inspector, and export architecture snapshots to **JSON** or **PNG**.
-5. **Real-Time Telemetry Simulation**: Stream 6-stage CI/CD execution updates over **WebSockets** (`/ws/telemetry`) with animated edges and status rollups.
+4. **Rich Visual Labels, Names & Semantic Tags**: Every node displays its tool & stage badges, clear human-readable resource name, technical resource address/file subtitle, and color-coded semantic tag chips (`tag:latest`, `ns:production`, `replicas:3`, `cidr:10.0.0.0/16`, `runner:ubuntu-latest`, plus user-defined custom tags).
+5. **Multi-Format Architecture Exporter (Animated GIF, SVG, PNG, JSON)**: Export a 6-stage animated **GIF89a** pipeline flow visualization (`*-live-flow.gif`), infinitely scalable **SVG** vector diagrams, high-resolution **PNG** snapshots, or canonical **JSON** graphs.
+6. **Hybrid Architecture Workbench & Chaos Testing**: Drag-and-drop custom nodes, draw persisted `manual_link` edges, highlight upstream/downstream **Impact Chains (Blast Radius)**, and inject live node failures over **WebSockets** (`/ws/telemetry`).
 
 ---
 
@@ -40,9 +41,12 @@ Modern cloud-native delivery pipelines are fragmented across multiple declarativ
 | **Cross-Tool Stitcher** | Automatically links CI jobs, container artifacts, cloud registries (ECR/ACR), IaC resources, GitOps controllers, and K8s workloads with human-readable `correlation_reason` explanations. |
 | **Cloud Boundary Nesting** | Groups cloud resources into hierarchical visual boundaries (`vpc`, `vnet`, `eks_cluster`, `aks_cluster`, `namespace`) using compound React Flow parent-child nodes. |
 | **3 Semantic Zoom Levels** | **Level 1**: Executive stage summary cards with live status rollup.<br>**Level 2**: Core CI jobs, artifacts, and runtime services.<br>**Level 3**: Full infrastructure topology including VPCs, subnets, IAM, security groups, and VMs. |
-| **Hybrid Manual Editing** | Drag nodes from the left **Architecture Toolbox**, draw custom `manual_link` edges, reposition nodes, and edit metadata. Persisted in `backend/data/overrides.json` across re-scans. |
-| **GitHub Repo Scanner & File Upload** | Scan any public or private GitHub repository by URL/branch/token or upload/edit raw configuration snippets directly in the browser. |
-| **Live WebSocket Simulation** | Trigger a 6-phase pipeline execution simulation (`source` → `ci` → `artifact` → `iac_and_config_mgmt` → `gitops` → `runtime_and_cloud`) streamed in real time via WebSocket. |
+| **Clear Names, Subtitles & Semantic Tags** | Auto-extracts Docker image tags, K8s namespaces/replicas/ports/selectors, Terraform cloud tags (`Name`, `Role`, CIDR, instance size), and runner metadata into color-coded visual tag chips, with custom tag editing in the Inspector. |
+| **Animated GIF, SVG, PNG & JSON Export** | Built-in zero-dependency **GIF89a encoder** renders an animated 6-stage CI/CD execution flow GIF complete with moving edge particles, stage progress bar, and legend, alongside **SVG**, **PNG**, and **JSON** exports. |
+| **Impact Chain (Blast Radius) & Tool Filters** | Selecting any node highlights its transitive upstream trigger chain (`UPSTREAM`) and downstream impact radius (`IMPACT`). Filter nodes by tool or toggle tags/edge labels on the fly. |
+| **Hybrid Manual Editing** | Drag nodes from the left **Architecture Toolbox**, draw custom `manual_link` edges, reposition nodes, and edit metadata/tags. Persisted in `backend/data/overrides.json` across re-scans. |
+| **GitHub Repo Scanner & File Upload** | Concurrently scans any public or private GitHub repository by URL/branch/token (8x parallel worker pool) or parses raw configuration snippets directly in the browser. |
+| **Live WebSocket & Chaos Failure Simulation** | Trigger a 6-phase pipeline execution simulation—or inject a failure on any specific node (`?fail_node_id=...`) to visualize failure propagation in real time via WebSocket. |
 
 ---
 
